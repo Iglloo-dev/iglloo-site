@@ -3,9 +3,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Iglloo – Retire Better, Live Longer",
+  title: "Iglloo – Exotic Living. Smart Retirement.",
   description:
-    "Iglloo helps North American retirees and families relocate abroad confidently with end-to-end concierge support.",
+    "Iglloo helps U.S. citizens retire abroad with lower costs, better healthcare, and a higher quality of life in destinations like Thailand, Vietnam, Portugal, Greece, and Panama.",
 };
 
 export default function RootLayout({

@@ -3,67 +3,84 @@
 export default function SmartRetirementSection() {
   return (
     <section
-      id="services"
-      className="border-b border-slate-800 bg-slate-900/80"
+      id="smart-retirement"
+      className="bg-emerald-50/60 border-b border-slate-200"
     >
-      <div className="mx-auto max-w-6xl px-4 py-16 md:px-6 md:py-20">
-        <div className="mx-auto max-w-3xl text-center space-y-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-300">
-            Smart Retirement Starts Here
+      <div className="mx-auto max-w-6xl px-4 py-14 md:px-6 md:py-18">
+        <div className="mx-auto max-w-4xl rounded-3xl bg-white/90 shadow-sm shadow-emerald-100 border border-emerald-100/70 px-6 py-8 md:px-10 md:py-10">
+          {/* Label */}
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-600">
+            Smart Retirement Plan
           </p>
-          <h2 className="text-2xl font-semibold tracking-tight text-slate-50 md:text-3xl">
-            A guided, stress-free path to your life abroad.
-          </h2>
-          <p className="text-sm leading-relaxed text-slate-300 md:text-base">
-            Instead of juggling agents, forums and random blogs, Iglloo gives
-            you one expert partner. We combine human advisors with intelligent
-            tools to help you compare destinations, understand healthcare and
-            build a relocation plan that fits your lifestyle and budget.
+
+          <div className="mt-4 grid gap-8 md:grid-cols-[minmax(0,1.3fr)_minmax(0,1.1fr)] md:items-start">
+            {/* Left – quote & explainer */}
+            <div className="space-y-4">
+              <p className="text-xl font-semibold leading-snug text-slate-900 md:text-2xl">
+                “We moved from Toronto to Chiang Mai and cut our monthly costs
+                by 40%.”
+              </p>
+              <p className="text-xs font-medium text-slate-500">
+                — Iglloo client · 63
+              </p>
+              <p className="text-sm leading-relaxed text-slate-700">
+                Every Iglloo plan is built around your health, lifestyle, and
+                financial goals. We combine on-the-ground research with expert
+                guidance so your retirement abroad feels predictable, safe, and
+                tailored to you.
+              </p>
+            </div>
+
+            {/* Right – stats cards */}
+            <div className="space-y-4">
+              {/* Cost of living */}
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-5 py-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  Cost of Living
+                </div>
+                <div className="mt-2 flex items-baseline gap-2">
+                  <span className="text-2xl font-semibold text-emerald-600">
+                    -35%
+                  </span>
+                  <span className="text-xs text-slate-600">
+                    Typical savings vs. major North American cities.
+                  </span>
+                </div>
+              </div>
+
+              {/* Healthcare access */}
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/80 px-5 py-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  Healthcare Access
+                </div>
+                <div className="mt-2 text-sm font-semibold text-emerald-700">
+                  Private &amp; public options
+                </div>
+                <p className="mt-1 text-xs text-slate-600">
+                  We guide you through insurance choices and trusted local
+                  providers in your new country.
+                </p>
+              </div>
+
+              {/* What we handle */}
+              <div className="rounded-2xl border border-emerald-100 bg-emerald-50/80 px-5 py-4">
+                <div className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                  What we handle
+                </div>
+                <p className="mt-2 text-xs leading-relaxed text-emerald-900">
+                  Visa &amp; immigration · Insurance · Property search · Banking
+                  · Local orientation &amp; more — so you can focus on living,
+                  not logistics.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Fine-print line */}
+          <p className="mt-6 text-[11px] text-slate-500">
+            *Illustrative snapshot. Every plan is tailored to your health,
+            family, and financial profile.
           </p>
-        </div>
-
-        <div className="mt-10 grid gap-6 md:grid-cols-3">
-          <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-5">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
-              01 · On-time scheduling
-            </p>
-            <h3 className="mt-3 text-sm font-semibold text-slate-50">
-              Coordinated, not chaotic
-            </h3>
-            <p className="mt-2 text-xs leading-relaxed text-slate-300">
-              We align your visa timelines, housing search, flights and
-              insurance so you’re not stuck with gaps between approvals and
-              move-in dates.
-            </p>
-          </div>
-
-          <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-5">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
-              02 · 24/7 Support
-            </p>
-            <h3 className="mt-3 text-sm font-semibold text-slate-50">
-              Help before & after you land
-            </h3>
-            <p className="mt-2 text-xs leading-relaxed text-slate-300">
-              Questions about medicines, local areas, banks or hospitals?
-              Iglloo support is available when you need it the most, not just
-              during office hours.
-            </p>
-          </div>
-
-          <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-5">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">
-              03 · No-pressure consultation
-            </p>
-            <h3 className="mt-3 text-sm font-semibold text-slate-50">
-              Start with a clarity call
-            </h3>
-            <p className="mt-2 text-xs leading-relaxed text-slate-300">
-              In your first session, we map your goals, health profile and
-              budget, then show you 2–3 realistic destination options to
-              consider.
-            </p>
-          </div>
         </div>
       </div>
     </section>

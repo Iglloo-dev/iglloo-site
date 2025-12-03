@@ -45,9 +45,11 @@ export default function DestinationsSection() {
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-600">
             Countries Where We Operate
           </p>
+
           <h2 className="text-2xl font-semibold tracking-tight text-slate-900 md:text-3xl">
             Handpicked destinations for a better life abroad.
           </h2>
+
           <p className="text-sm leading-relaxed text-slate-700 md:text-base">
             Every country we recommend balances cost of living, healthcare,
             safety, and lifestyle — so you can retire with confidence.
@@ -60,6 +62,7 @@ export default function DestinationsSection() {
               key={dest.name}
               className="flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
             >
+              {/* IMAGE SECTION */}
               <div className="relative h-40 w-full">
                 <Image
                   src={dest.image}
@@ -68,10 +71,13 @@ export default function DestinationsSection() {
                   className="object-cover"
                 />
               </div>
+
+              {/* TEXT SECTION */}
               <div className="flex flex-1 flex-col p-4">
                 <h3 className="text-sm font-semibold text-slate-900">
                   {dest.name}
                 </h3>
+
                 <p className="mt-2 text-xs leading-relaxed text-slate-700">
                   {dest.blurb}
                 </p>

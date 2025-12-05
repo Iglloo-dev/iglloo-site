@@ -270,6 +270,8 @@ export default async function handler(
     country,
   });
 
+  console.log("Computed spamScore:", spamScore);
+
   // For now, we are NOT doing AI insights / lead_score / lead_segment.
   const aiInsight: string | null = null;
   const leadScore: number | null = null;
@@ -278,6 +280,7 @@ export default async function handler(
   // ---------------------------------------------
   // 5️⃣ STORE LEAD IN SUPABASE
   // ---------------------------------------------
+    // 5️⃣ STORE LEAD IN SUPABASE
   try {
     const { error } = await supabaseAdmin.from("leads").insert({
       name,
@@ -288,7 +291,7 @@ export default async function handler(
       ai_insight: aiInsight,
       visitor_country: visitorCountry,
       ip_address: clientIp,
-      spam_score: spamScore,
+      spam_score: spamScore,      // 👈 EXACTLY this key
       lead_score: leadScore,
       lead_segment: leadSegment,
     });

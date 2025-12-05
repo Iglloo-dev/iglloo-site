@@ -4,33 +4,24 @@ import nodemailer from "nodemailer";
 import axios from "axios";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
-// If you later re-enable AI, you can wire this back:
-// import OpenAI from "openai";
-// const openai =
-//   process.env.AI_INSIGHTS_ENABLED === "true" && process.env.OPENAI_API_KEY
-//     ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-//     : null;
-
-/**
- * Extract client IP from Vercel / Node request.
- */
+// -----------------------------
+// Helper: extract client IP
+// -----------------------------
 function extractClientIp(req: NextApiRequest): string | null {
   const xff = req.headers["x-forwarded-for"];
-
   const raw =
     (Array.isArray(xff) ? xff[0] : xff?.split(",")[0]) ??
     req.socket.remoteAddress ??
     null;
 
   if (!raw) return null;
-
   // Handle IPv6-mapped IPv4 like ::ffff:1.2.3.4
   return raw.replace("::ffff:", "").trim();
 }
 
-/**
- * Very small private-IP check.
- */
+// -----------------------------
+// Helper: is private/local IP?
+// -----------------------------
 function isPrivateIp(ip: string): boolean {
   if (ip === "127.0.0.1" || ip === "::1") return true;
   if (ip.startsWith("10.")) return true;
@@ -43,16 +34,12 @@ function isPrivateIp(ip: string): boolean {
   return false;
 }
 
-/**
- * Lookup country name from IP using a public Geo-IP API.
- * You can swap provider later if you want.
- */
+// -----------------------------
+// Helper: Geo-IP lookup (ip → country)
+// -----------------------------
 async function lookupCountryFromIp(ip: string): Promise<string | null> {
   try {
-    // Simple public endpoint (no API key for small usage).
-    // If you ever hit limits, switch to a paid key-based service.
     const res = await fetch(`https://ipapi.co/${ip}/json/`, {
-      // Don’t let this slow the whole request forever
       cache: "no-store",
     });
 
@@ -68,6 +55,108 @@ async function lookupCountryFromIp(ip: string): Promise<string | null> {
     console.error("GeoIP lookup failed:", err);
     return null;
   }
+}
+
+// -----------------------------
+// Helper: rule-based spam score
+// returns number between 0 and 1
+// -----------------------------
+function computeSpamScore(params: {
+  name: string;
+  email: string;
+  message: string;
+  country?: string;
+}): number {
+  const { name, email, message, country } = params;
+  let score = 0;
+
+  const lowerMsg = message.toLowerCase();
+  const lowerName = name.toLowerCase();
+  const lowerEmail = email.toLowerCase();
+
+  // 1) Bad keywords / obvious spam phrases
+  const spamPhrases = [
+    "free money",
+    "investment opportunity",
+    "forex",
+    "crypto",
+    "bitcoin",
+    "binary options",
+    "loan offer",
+    "fast cash",
+    "work from home",
+    "seo services",
+    "backlinks",
+    "viagra",
+    "casino",
+    "betting",
+  ];
+
+  for (const phrase of spamPhrases) {
+    if (lowerMsg.includes(phrase)) {
+      score += 0.2; // add 0.2 per bad phrase
+    }
+  }
+
+  // 2) Too many URLs / links
+  const urlMatches = message.match(/https?:\/\/|www\./gi);
+  if (urlMatches && urlMatches.length > 0) {
+    score += Math.min(0.3, urlMatches.length * 0.1);
+  }
+
+  // 3) Very short or very generic message
+  if (message.trim().length < 10) {
+    score += 0.15; // suspiciously short
+  }
+  const genericPhrases = [
+    "contact me",
+    "please call",
+    "need services",
+    "interested in your services",
+  ];
+  for (const phrase of genericPhrases) {
+    if (lowerMsg === phrase || lowerMsg.startsWith(phrase)) {
+      score += 0.15;
+    }
+  }
+
+  // 4) Name looks fake (only one char, or nonsense)
+  if (name.trim().length < 2) {
+    score += 0.2;
+  }
+  if (!/[aeiou]/i.test(name) && name.trim().length >= 4) {
+    // no vowels in name -> suspicious
+    score += 0.15;
+  }
+
+  // 5) Email from known “throwaway-ish” or low-quality domains
+  const throwawayDomains = [
+    "mailinator.com",
+    "yopmail.com",
+    "guerillamail.com",
+    "tempmail.com",
+    "10minutemail.com",
+  ];
+  const emailDomain = lowerEmail.split("@")[1] || "";
+  if (throwawayDomains.includes(emailDomain)) {
+    score += 0.3;
+  }
+
+  // 6) All caps message
+  if (message === message.toUpperCase() && message.length >= 10) {
+    score += 0.15;
+  }
+
+  // 7) Weird country (optional) – if country is blank but visitor_country exists,
+  // or country = "N/A" style, we can consider slightly suspicious.
+  if (!country || country.trim().length < 2) {
+    score += 0.05;
+  }
+
+  // Clamp between 0 and 1
+  if (score < 0) score = 0;
+  if (score > 1) score = 1;
+  return Number(score.toFixed(2));
 }
 
 export default async function handler(
@@ -172,15 +261,19 @@ export default async function handler(
   }
 
   // ---------------------------------------------
-  // 4️⃣ (OPTIONAL) AI INSIGHTS – currently disabled
+  // 4️⃣ Rule-based spam score (0–1)
   // ---------------------------------------------
-  let aiInsight: string | null = null;
-  let spamScore: number | null = null;
-  let leadScore: number | null = null;
-  let leadSegment: string | null = null;
+  const spamScore = computeSpamScore({
+    name,
+    email,
+    message,
+    country,
+  });
 
-  // If you later enable AI, you can plug that logic here and fill
-  // aiInsight, spamScore, leadScore, leadSegment.
+  // For now, we are NOT doing AI insights / lead_score / lead_segment.
+  const aiInsight: string | null = null;
+  const leadScore: number | null = null;
+  const leadSegment: string | null = null;
 
   // ---------------------------------------------
   // 5️⃣ STORE LEAD IN SUPABASE
@@ -203,7 +296,7 @@ export default async function handler(
     if (error) {
       console.error("Supabase insert error:", error);
     } else {
-      console.log("Lead stored in Supabase");
+      console.log("Lead stored in Supabase with spam_score:", spamScore);
     }
   } catch (err) {
     console.error("Supabase insert exception:", err);

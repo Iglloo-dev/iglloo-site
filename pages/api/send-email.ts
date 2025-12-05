@@ -1,12 +1,10 @@
-import { NextApiRequest, NextApiResponse } from "next";
+// pages/api/send-email.ts
+import type { NextApiRequest, NextApiResponse } from "next";
 import nodemailer from "nodemailer";
 import axios from "axios";
-import OpenAI from "openai";
+import { supabaseAdmin } from "../../lib/supabaseAdmin";
 
-const PHONE_REGEX = /^[0-9+\-\s()]{7,20}$/;
-const COUNTRY_REGEX = /^[A-Za-z\s]{2,40}$/;
-
-const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
+const AI_ENABLED = process.env.AI_INSIGHTS_ENABLED === "true";
 
 export default async function handler(
   req: NextApiRequest,
@@ -16,30 +14,28 @@ export default async function handler(
     return res.status(405).json({ ok: false, error: "Method not allowed" });
   }
 
-  const { name, email, phone, country, message, honey } = req.body;
+  const { name, email, phone, country, message } = req.body || {};
 
-  // 🐝 Honeypot (bot) check
-  if (honey && honey.trim() !== "") {
-    console.log("Spam bot blocked.");
-    return res.status(200).json({ ok: true, spam: true });
+  if (!name || !email || !country || !message) {
+    return res
+      .status(400)
+      .json({ ok: false, error: "Missing required fields" });
   }
 
-  // Validation
-  if (!name || !email || !message) {
-    return res.status(400).json({ ok: false, error: "Missing required fields" });
-  }
+  // ---------------------------------
+  // 0. Derive visitor IP (best-effort)
+  // ---------------------------------
+  const rawIp =
+    (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim() ||
+    req.socket.remoteAddress ||
+    null;
 
-  if (!PHONE_REGEX.test(String(phone))) {
-    return res.status(400).json({ ok: false, error: "Invalid phone format" });
-  }
+  // TODO (optional): later we can call an IP lookup API and fill visitorCountry
+  const visitorCountry: string | null = null;
 
-  if (!COUNTRY_REGEX.test(String(country))) {
-    return res.status(400).json({ ok: false, error: "Invalid country format" });
-  }
-
-  // ------------------------------------
-  // 1️⃣ Send email to Mailtrap Sandbox
-  // ------------------------------------
+  // ---------------------------------
+  // 1. Send to Mailtrap Sandbox
+  // ---------------------------------
   const transporter = nodemailer.createTransport({
     host: process.env.MAILTRAP_HOST,
     port: Number(process.env.MAILTRAP_PORT),
@@ -57,73 +53,44 @@ export default async function handler(
       <h2>New inquiry from Iglloo website</h2>
       <p><strong>Name:</strong> ${name}</p>
       <p><strong>Email:</strong> ${email}</p>
-      <p><strong>Phone:</strong> ${phone}</p>
+      <p><strong>Phone:</strong> ${phone || "N/A"}</p>
       <p><strong>Country considering:</strong> ${country}</p>
-      <p><strong>Message:</strong> ${message}</p>
+      <p><strong>Message:</strong><br>${message}</p>
     `,
   };
 
   try {
     await transporter.sendMail(sandboxEmail);
-    console.log("Sandbox email delivered.");
+    console.log("Sandbox email delivered");
   } catch (err) {
-    console.error("Sandbox delivery error", err);
+    console.error("Sandbox email error:", err);
+    // we still continue so we can try to log the lead
   }
 
-  // ------------------------------------------------
-  // 2️⃣ AI Lead Intelligence Agent (OpenAI analysis)
-  // ------------------------------------------------
-
-  let aiSummary = "AI analysis unavailable.";
-
-  try {
-    const aiRes = await client.responses.create({
-      model: "gpt-4.1-mini",
-      input: `
-        You are an AI Lead Qualification Agent.
-        Analyze the following inquiry and respond with:
-
-        - Lead Quality Score (1–10)
-        - Intent Level (Low/Medium/High)
-        - Key Motivation Summary
-        - Recommended Next Follow-up Action
-
-        Inquiry:
-        Name: ${name}
-        Email: ${email}
-        Phone: ${phone}
-        Country: ${country}
-        Message: ${message}
-      `,
-    });
-
-    aiSummary = aiRes.output_text;
-  } catch (err) {
-    console.error("AI error", err);
-  }
-
-  // -------------------------------------------------
-  // 3️⃣ Forward to Gmail (via Mailtrap API)
-  // -------------------------------------------------
+  // ---------------------------------
+  // 2. Forward to Gmail via Mailtrap API
+  // ---------------------------------
   try {
     await axios.post(
       "https://send.api.mailtrap.io/api/send",
       {
-        from: { email: "no-reply@iglloo.online", name: "Iglloo Website" },
-        to: [{ email: process.env.CONTACT_TO_EMAIL }],
-        subject: `Lead Inquiry + AI Summary`,
+        from: {
+          email: "no-reply@iglloo.online",
+          name: "Iglloo Website",
+        },
+        to: [
+          {
+            email: process.env.CONTACT_TO_EMAIL,
+          },
+        ],
+        subject: `New inquiry from ${name}`,
         html: `
-          <h2>New Lead from Iglloo Website</h2>
+          <h2>New inquiry from Iglloo website</h2>
           <p><strong>Name:</strong> ${name}</p>
           <p><strong>Email:</strong> ${email}</p>
-          <p><strong>Phone:</strong> ${phone}</p>
-          <p><strong>Country:</strong> ${country}</p>
-          <p><strong>Message:</strong> ${message}</p>
-
-          <hr />
-
-          <h3>AI Lead Intelligence Summary</h3>
-          <pre>${aiSummary}</pre>
+          <p><strong>Phone:</strong> ${phone || "N/A"}</p>
+          <p><strong>Country considering:</strong> ${country}</p>
+          <p><strong>Message:</strong><br>${message}</p>
         `,
       },
       {
@@ -134,9 +101,104 @@ export default async function handler(
       }
     );
 
-    console.log("Forwarded to Gmail.");
+    console.log("Forwarded to Gmail successfully");
   } catch (err: any) {
-    console.error("Gmail forward error:", err.response?.data || err);
+    console.error(
+      "Mailtrap API Gmail forward error:",
+      err.response?.data || err
+    );
+  }
+
+  // ---------------------------------
+  // 3. (Optional) AI insight / scoring
+  // ---------------------------------
+  let aiInsight: string | null = null;
+  let spamScore: number | null = null;
+  let leadScore: number | null = null;
+  let leadSegment: string | null = null;
+
+  if (AI_ENABLED && process.env.OPENAI_API_KEY) {
+    try {
+      // ⚠️ This will currently hit your quota error, so leave AI_ENABLED=false
+      const prompt = `
+You are a lead intelligence assistant for a retirement relocation service.
+
+Lead details:
+- Name: ${name}
+- Email: ${email}
+- Phone: ${phone || "N/A"}
+- Country considering: ${country}
+- Message: ${message}
+
+1) Summarize this lead in 1–2 sentences.
+2) Give a spam score between 0 and 1 (0 = not spam, 1 = obvious spam).
+3) Give a lead quality score from 0 to 100.
+4) Classify as "Hot", "Warm", or "Cold".
+
+Return a JSON object with keys:
+"summary", "spam_score", "lead_score", "segment".
+`;
+
+      const aiRes = await fetch("https://api.openai.com/v1/responses", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "gpt-4.1-mini",
+          input: prompt,
+          response_format: { type: "json_object" },
+        }),
+      });
+
+      if (!aiRes.ok) {
+        const text = await aiRes.text();
+        throw new Error(`OpenAI error: ${aiRes.status} ${text}`);
+      }
+
+      const json = await aiRes.json();
+      const parsed = JSON.parse(json.output[0].content[0].text);
+
+      aiInsight = parsed.summary ?? null;
+      spamScore =
+        typeof parsed.spam_score === "number" ? parsed.spam_score : null;
+      leadScore =
+        typeof parsed.lead_score === "number" ? parsed.lead_score : null;
+      leadSegment = typeof parsed.segment === "string" ? parsed.segment : null;
+    } catch (err) {
+      console.error("AI lead insight error:", err);
+      // we just skip AI fields if it fails
+    }
+  }
+
+  // ---------------------------------
+  // 4. Insert lead into Supabase
+  // ---------------------------------
+  try {
+    const { error } = await supabaseAdmin.from("leads").insert({
+      created_at: new Date().toISOString(),
+      name,
+      email,
+      phone,
+      country,
+      message,
+      ai_insight: aiInsight,
+      visitor_country: visitorCountry,
+      ip_address: rawIp,
+      // comment these out if you didn't create the columns
+      spam_score: spamScore,
+      lead_score: leadScore,
+      lead_segment: leadSegment,
+    });
+
+    if (error) {
+      console.error("Supabase insert error:", error);
+    } else {
+      console.log("Lead saved to Supabase");
+    }
+  } catch (err) {
+    console.error("Unexpected Supabase error:", err);
   }
 
   return res.status(200).json({ ok: true });

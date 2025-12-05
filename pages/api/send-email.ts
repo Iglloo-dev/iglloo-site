@@ -1,20 +1,12 @@
-import type { NextApiRequest, NextApiResponse } from "next";
+import { NextApiRequest, NextApiResponse } from "next";
 import nodemailer from "nodemailer";
 import axios from "axios";
 import OpenAI from "openai";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const PHONE_REGEX = /^[0-9+\-\s()]{7,20}$/;
+const COUNTRY_REGEX = /^[A-Za-z\s]{2,40}$/;
 
-type LeadInsights = {
-  summary: string;
-  urgency: "low" | "medium" | "high";
-  service_fit: "poor" | "ok" | "strong";
-  destinations: string[];
-  next_action: string;
-  tags: string[];
-};
+const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
 export default async function handler(
   req: NextApiRequest,
@@ -24,119 +16,30 @@ export default async function handler(
     return res.status(405).json({ ok: false, error: "Method not allowed" });
   }
 
-  const { name, email, phone, country, message, company } = req.body as {
-    name?: string;
-    email?: string;
-    phone?: string;
-    country?: string;
-    message?: string;
-    company?: string; // honeypot
-  };
+  const { name, email, phone, country, message, honey } = req.body;
 
-  // Honeypot – if this is filled, it's almost certainly a bot.
-  if (company && company.trim().length > 0) {
-    console.warn("Honeypot triggered – ignoring submission.");
-    return res.status(200).json({ ok: true });
+  // 🐝 Honeypot (bot) check
+  if (honey && honey.trim() !== "") {
+    console.log("Spam bot blocked.");
+    return res.status(200).json({ ok: true, spam: true });
   }
 
+  // Validation
   if (!name || !email || !message) {
-    return res
-      .status(400)
-      .json({ ok: false, error: "Missing required fields." });
+    return res.status(400).json({ ok: false, error: "Missing required fields" });
   }
 
-  // Small extra validation on backend
-  const emailPattern = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
-  if (!emailPattern.test(email)) {
-    return res
-      .status(400)
-      .json({ ok: false, error: "Invalid email address format." });
+  if (!PHONE_REGEX.test(String(phone))) {
+    return res.status(400).json({ ok: false, error: "Invalid phone format" });
   }
 
-  // --- Base HTML used for both sandbox + Gmail ---
-  const buildHtml = (insightsHtml?: string) => `
-    <h2>New inquiry from Iglloo website</h2>
-    <p><strong>Name:</strong> ${name}</p>
-    <p><strong>Email:</strong> ${email}</p>
-    <p><strong>Phone:</strong> ${phone || "N/A"}</p>
-    <p><strong>Country considering:</strong> ${country || "N/A"}</p>
-    <p><strong>Message:</strong><br>${message}</p>
-    ${insightsHtml ?? ""}
-  `;
-
-  // Placeholder – we fill this after AI step (if available)
-  let insights: LeadInsights | null = null;
-  let insightsHtml = "";
-
-  // -----------------------------
-  // 🤖 1) Ask OpenAI for lead insights
-  // -----------------------------
-  if (process.env.OPENAI_API_KEY) {
-    try {
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        temperature: 0.3,
-        messages: [
-          {
-            role: "system",
-            content:
-              "You are a sales assistant for Iglloo, a service helping North American retirees relocate to countries like Thailand and Vietnam. Analyse each inquiry and output a compact JSON object.",
-          },
-          {
-            role: "user",
-            content: `
-Raw lead details:
-Name: ${name}
-Email: ${email}
-Phone: ${phone || "N/A"}
-Country considering: ${country || "N/A"}
-Message: ${message}
-
-Return ONLY valid JSON with the following keys:
-- summary: short 1-2 sentence summary of what this person wants.
-- urgency: one of "low", "medium", "high".
-- service_fit: one of "poor", "ok", "strong".
-- destinations: array of destination names you can infer (can be empty).
-- next_action: one concrete follow-up suggestion for Karan.
-- tags: array of 3-6 short tags (e.g. ["thailand", "healthcare-focused", "2026-timeline"]).
-          `,
-          },
-        ],
-      });
-
-      const raw = completion.choices[0].message.content ?? "{}";
-      try {
-        insights = JSON.parse(raw) as LeadInsights;
-
-        insightsHtml = `
-          <hr />
-          <h3>AI Lead Insights</h3>
-          <p><strong>Summary:</strong> ${insights.summary}</p>
-          <p><strong>Urgency:</strong> ${insights.urgency}</p>
-          <p><strong>Service fit:</strong> ${insights.service_fit}</p>
-          <p><strong>Destinations:</strong> ${
-            insights.destinations?.join(", ") || "N/A"
-          }</p>
-          <p><strong>Suggested next action:</strong> ${
-            insights.next_action
-          }</p>
-          <p><strong>Tags:</strong> ${insights.tags?.join(", ")}</p>
-        `;
-      } catch (jsonErr) {
-        console.error("Failed to parse AI JSON:", jsonErr);
-      }
-    } catch (err) {
-      console.error("AI lead insight error:", err);
-    }
-  } else {
-    console.warn("OPENAI_API_KEY not set – skipping AI lead insights.");
+  if (!COUNTRY_REGEX.test(String(country))) {
+    return res.status(400).json({ ok: false, error: "Invalid country format" });
   }
 
-  const htmlBody = buildHtml(insightsHtml);
-
-  // -----------------------------
-  // 2) SEND TO MAILTRAP SANDBOX (nodemailer)
-  // -----------------------------
+  // ------------------------------------
+  // 1️⃣ Send email to Mailtrap Sandbox
+  // ------------------------------------
   const transporter = nodemailer.createTransport({
     host: process.env.MAILTRAP_HOST,
     port: Number(process.env.MAILTRAP_PORT),
@@ -150,35 +53,78 @@ Return ONLY valid JSON with the following keys:
     from: "Iglloo Website <no-reply@iglloo.online>",
     to: process.env.CONTACT_TO_EMAIL_SANDBOX ?? "contact@iglloo.online",
     subject: `New inquiry from ${name}`,
-    html: htmlBody,
+    html: `
+      <h2>New inquiry from Iglloo website</h2>
+      <p><strong>Name:</strong> ${name}</p>
+      <p><strong>Email:</strong> ${email}</p>
+      <p><strong>Phone:</strong> ${phone}</p>
+      <p><strong>Country considering:</strong> ${country}</p>
+      <p><strong>Message:</strong> ${message}</p>
+    `,
   };
 
   try {
     await transporter.sendMail(sandboxEmail);
-    console.log("Sandbox email delivered");
+    console.log("Sandbox email delivered.");
   } catch (err) {
-    console.error("Sandbox email error:", err);
-    // We continue, so Gmail forward still has a chance.
+    console.error("Sandbox delivery error", err);
   }
 
-  // -----------------------------
-  // 3) ALSO FORWARD TO GMAIL VIA MAILTRAP API
-  // -----------------------------
+  // ------------------------------------------------
+  // 2️⃣ AI Lead Intelligence Agent (OpenAI analysis)
+  // ------------------------------------------------
+
+  let aiSummary = "AI analysis unavailable.";
+
+  try {
+    const aiRes = await client.responses.create({
+      model: "gpt-4.1-mini",
+      input: `
+        You are an AI Lead Qualification Agent.
+        Analyze the following inquiry and respond with:
+
+        - Lead Quality Score (1–10)
+        - Intent Level (Low/Medium/High)
+        - Key Motivation Summary
+        - Recommended Next Follow-up Action
+
+        Inquiry:
+        Name: ${name}
+        Email: ${email}
+        Phone: ${phone}
+        Country: ${country}
+        Message: ${message}
+      `,
+    });
+
+    aiSummary = aiRes.output_text;
+  } catch (err) {
+    console.error("AI error", err);
+  }
+
+  // -------------------------------------------------
+  // 3️⃣ Forward to Gmail (via Mailtrap API)
+  // -------------------------------------------------
   try {
     await axios.post(
       "https://send.api.mailtrap.io/api/send",
       {
-        from: {
-          email: "no-reply@iglloo.online",
-          name: "Iglloo Website",
-        },
-        to: [
-          {
-            email: process.env.CONTACT_TO_EMAIL,
-          },
-        ],
-        subject: `New inquiry from ${name}`,
-        html: htmlBody,
+        from: { email: "no-reply@iglloo.online", name: "Iglloo Website" },
+        to: [{ email: process.env.CONTACT_TO_EMAIL }],
+        subject: `Lead Inquiry + AI Summary`,
+        html: `
+          <h2>New Lead from Iglloo Website</h2>
+          <p><strong>Name:</strong> ${name}</p>
+          <p><strong>Email:</strong> ${email}</p>
+          <p><strong>Phone:</strong> ${phone}</p>
+          <p><strong>Country:</strong> ${country}</p>
+          <p><strong>Message:</strong> ${message}</p>
+
+          <hr />
+
+          <h3>AI Lead Intelligence Summary</h3>
+          <pre>${aiSummary}</pre>
+        `,
       },
       {
         headers: {
@@ -188,17 +134,9 @@ Return ONLY valid JSON with the following keys:
       }
     );
 
-    console.log("Forwarded to Gmail successfully");
+    console.log("Forwarded to Gmail.");
   } catch (err: any) {
-    console.error(
-      "Mailtrap API Gmail forward error:",
-      err?.response?.data || err
-    );
-  }
-
-  // (Optional) log AI insights for now – later we can store in DB / sheets
-  if (insights) {
-    console.log("AI lead insights:", insights);
+    console.error("Gmail forward error:", err.response?.data || err);
   }
 
   return res.status(200).json({ ok: true });

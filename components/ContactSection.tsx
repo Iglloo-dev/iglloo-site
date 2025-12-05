@@ -1,263 +1,234 @@
 "use client";
 
-import { useState } from "react";
+import React, { useState } from "react";
+
+type FormState = {
+  name: string;
+  email: string;
+  phone: string;
+  country: string;
+  message: string;
+  // honeypot – real users never see / touch this
+  company: string;
+};
+
+const initialForm: FormState = {
+  name: "",
+  email: "",
+  phone: "",
+  country: "",
+  message: "",
+  company: "",
+};
+
+type Status = "idle" | "submitting" | "success" | "error";
 
 export default function ContactSection() {
-  const [form, setForm] = useState({
-    name: "",
-    email: "",
-    phone: "",
-    country: "",
-    message: "",
-  });
-
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">(
-    "idle"
-  );
+  const [form, setForm] = useState<FormState>(initialForm);
+  const [status, setStatus] = useState<Status>("idle");
+  const [error, setError] = useState<string | null>(null);
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
   ) => {
-    const { id, value } = e.target;
-    setForm((prev) => ({ ...prev, [id]: value }));
-    setErrors((prev) => ({ ...prev, [id]: "" })); // clear error on change
+    const { name, value } = e.target;
+    setForm((prev) => ({ ...prev, [name]: value }));
   };
 
-  const validate = () => {
-    const newErrors: Record<string, string> = {};
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setError(null);
 
-    if (!form.name.trim()) newErrors.name = "Please enter your name.";
-    if (!form.email.trim()) {
-      newErrors.email = "Please enter your email.";
-    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) {
-      newErrors.email = "Please enter a valid email address.";
+    // --- Basic front-end validation ---
+    if (!form.name.trim() || !form.email.trim() || !form.message.trim()) {
+      setError("Please fill in your name, email, and message.");
+      setStatus("error");
+      return;
     }
-    if (!form.message.trim()) newErrors.message = "Please enter a message.";
 
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+    const emailPattern = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+    if (!emailPattern.test(form.email.trim())) {
+      setError("Please enter a valid email address.");
+      setStatus("error");
+      return;
+    }
+
+    if (form.message.trim().length < 10) {
+      setError("Please add a bit more detail to your message.");
+      setStatus("error");
+      return;
+    }
+
+    // --- Honeypot: if a bot fills this, silently pretend success ---
+    if (form.company.trim().length > 0) {
+      console.warn("Honeypot field triggered – likely bot submission.");
+      setStatus("success");
+      setForm(initialForm);
+      return;
+    }
+
+    setStatus("submitting");
+
+    try {
+      const res = await fetch("/api/send-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Request failed with status ${res.status}`);
+      }
+
+      const data = await res.json();
+      if (!data.ok) {
+        throw new Error(data.error || "Something went wrong.");
+      }
+
+      setStatus("success");
+      setForm(initialForm);
+    } catch (err) {
+      console.error("Contact form error:", err);
+      setError(
+        "Something went wrong while sending your message. Please try again."
+      );
+      setStatus("error");
+    }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-  e.preventDefault();
-  if (!validate()) return;
-
-  setStatus("submitting");
-
-  try {
-    const response = await fetch("/api/send-email", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        name: form.name,
-        email: form.email,
-        phone: form.phone,
-        message: form.message,
-      }),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok || !data.ok) {
-      throw new Error(data.error || "Something went wrong while sending.");
-    }
-
-    setStatus("success");
-    setForm({
-      name: "",
-      email: "",
-      phone: "",
-      country: "",
-      message: "",
-    });
-  } catch (err) {
-    console.error("Error submitting contact form:", err);
-    setStatus("error");
-  } finally {
-    // Reset status after a short delay so the message disappears
-    setTimeout(() => setStatus("idle"), 2500);
-  }
-};
-
+  const isSubmitting = status === "submitting";
 
   return (
-    <section id="contact" className="border-b border-slate-200 bg-white">
-      <div className="mx-auto max-w-6xl px-4 py-16 md:px-6 md:py-20">
-        <div className="mx-auto max-w-3xl text-center space-y-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-600">
-            Contact Us
-          </p>
-          <h2 className="text-2xl font-semibold tracking-tight text-slate-900 md:text-3xl">
-            Let&apos;s plan your retirement abroad.
-          </h2>
-          <p className="text-sm md:text-base text-slate-700">
-            Share a few details and our team will reach out to discuss your
-            retirement plan, destinations and next steps.
-          </p>
+    <section id="contact" className="bg-emerald-50 py-16">
+      <div className="max-w-5xl mx-auto px-4">
+        <h2 className="text-3xl font-semibold text-emerald-900">
+          Share a few details and our team will reach out to discuss your
+          retirement plan, destinations and next steps.
+        </h2>
+
+        {/* Status messages */}
+        <div className="mt-6 space-y-3">
+          {status === "success" && (
+            <p className="rounded-md bg-emerald-100 px-4 py-3 text-sm text-emerald-900">
+              ✅ Thank you! We&apos;ve received your inquiry and will get back to
+              you as soon as possible.
+            </p>
+          )}
+
+          {status === "error" && error && (
+            <p className="rounded-md bg-red-100 px-4 py-3 text-sm text-red-800">
+              {error}
+            </p>
+          )}
         </div>
 
-        <div className="mt-10 grid gap-10 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
-          {/* Form */}
-          <div className="rounded-3xl border border-slate-200 bg-emerald-50/60 p-6 shadow-sm md:p-7">
-            <form className="space-y-4" onSubmit={handleSubmit} noValidate>
-              <div className="grid gap-4 md:grid-cols-2">
-                <div>
-                  <label
-                    htmlFor="name"
-                    className="block text-xs font-semibold text-slate-700"
-                  >
-                    Name *
-                  </label>
-                  <input
-                    id="name"
-                    type="text"
-                    value={form.name}
-                    onChange={handleChange}
-                    className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm text-slate-900 outline-none ring-0 ${
-                      errors.name
-                        ? "border-red-400 focus:border-red-500"
-                        : "border-slate-300 focus:border-emerald-500"
-                    }`}
-                  />
-                  {errors.name && (
-                    <p className="mt-1 text-[11px] text-red-600">{errors.name}</p>
-                  )}
-                </div>
+        <form
+          onSubmit={handleSubmit}
+          className="mt-8 space-y-6 rounded-2xl bg-white p-6 shadow-sm"
+        >
+          {/* Honeypot – hidden from real users */}
+          <div className="hidden" aria-hidden="true">
+            <label className="block text-sm font-medium text-gray-700">
+              Company
+              <input
+                type="text"
+                name="company"
+                autoComplete="off"
+                tabIndex={-1}
+                value={form.company}
+                onChange={handleChange}
+                className="mt-1 block w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900"
+              />
+            </label>
+          </div>
 
-                <div>
-                  <label
-                    htmlFor="email"
-                    className="block text-xs font-semibold text-slate-700"
-                  >
-                    Email *
-                  </label>
-                  <input
-                    id="email"
-                    type="email"
-                    value={form.email}
-                    onChange={handleChange}
-                    className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm text-slate-900 outline-none ring-0 ${
-                      errors.email
-                        ? "border-red-400 focus:border-red-500"
-                        : "border-slate-300 focus:border-emerald-500"
-                    }`}
-                  />
-                  {errors.email && (
-                    <p className="mt-1 text-[11px] text-red-600">{errors.email}</p>
-                  )}
-                </div>
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-2">
-                <div>
-                  <label
-                    htmlFor="phone"
-                    className="block text-xs font-semibold text-slate-700"
-                  >
-                    Phone
-                  </label>
-                  <input
-                    id="phone"
-                    type="tel"
-                    value={form.phone}
-                    onChange={handleChange}
-                    className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-0 focus:border-emerald-500"
-                  />
-                </div>
-                <div>
-                  <label
-                    htmlFor="country"
-                    className="block text-xs font-semibold text-slate-700"
-                  >
-                    Country you&apos;re considering
-                  </label>
-                  <input
-                    id="country"
-                    type="text"
-                    value={form.country}
-                    onChange={handleChange}
-                    className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-0 focus:border-emerald-500"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label
-                  htmlFor="message"
-                  className="block text-xs font-semibold text-slate-700"
-                >
-                  Message *
-                </label>
-                <textarea
-                  id="message"
-                  rows={4}
-                  value={form.message}
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Name *
+                <input
+                  type="text"
+                  name="name"
+                  value={form.name}
                   onChange={handleChange}
-                  className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm text-slate-900 outline-none ring-0 ${
-                    errors.message
-                      ? "border-red-400 focus:border-red-500"
-                      : "border-slate-300 focus:border-emerald-500"
-                  }`}
+                  className="mt-1 block w-full rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  placeholder="Your full name"
+                  required
                 />
-                {errors.message && (
-                  <p className="mt-1 text-[11px] text-red-600">
-                    {errors.message}
-                  </p>
-                )}
-              </div>
+              </label>
+            </div>
 
-              <div className="pt-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <button
-                  type="submit"
-                  disabled={status === "submitting"}
-                  className="inline-flex items-center justify-center rounded-full bg-emerald-500 px-6 py-2.5 text-sm font-semibold text-white shadow-sm shadow-emerald-300 transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:bg-emerald-300"
-                >
-                  {status === "submitting"
-                    ? "Sending..."
-                    : "Submit & Book a Call"}
-                </button>
-
-                {status === "success" && (
-                  <p className="text-xs text-emerald-700">
-                    Thank you! Your message has been received. We&apos;ll get back
-                    to you shortly.
-                  </p>
-                )}
-                {status === "error" && (
-                  <p className="text-xs text-red-600">
-                    Something went wrong. Please try again.
-                  </p>
-                )}
-              </div>
-            </form>
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Email *
+                <input
+                  type="email"
+                  name="email"
+                  value={form.email}
+                  onChange={handleChange}
+                  className="mt-1 block w-full rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  placeholder="you@example.com"
+                  required
+                />
+              </label>
+            </div>
           </div>
 
-          {/* Contact info panel */}
-          <div className="space-y-4 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm md:p-7">
-            <h3 className="text-sm font-semibold text-slate-900">Get In Touch</h3>
-            <ul className="space-y-3 text-sm text-slate-700">
-              <li className="flex items-start gap-2">
-                <span aria-hidden="true">📍</span>
-                <span>Columbus, Ohio-43228</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <span aria-hidden="true">📞</span>
-                <span>+19174433355</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <span aria-hidden="true">✉</span>
-                <span>info@iglloo.online</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <span aria-hidden="true">⏰</span>
-                <span>Time: Available online (Weekdays)</span>
-              </li>
-            </ul>
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Phone
+                <input
+                  type="tel"
+                  name="phone"
+                  value={form.phone}
+                  onChange={handleChange}
+                  className="mt-1 block w-full rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  placeholder="+1 555 123 4567"
+                />
+              </label>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Country you&apos;re considering
+                <input
+                  type="text"
+                  name="country"
+                  value={form.country}
+                  onChange={handleChange}
+                  className="mt-1 block w-full rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  placeholder="Thailand, Vietnam, Portugal..."
+                />
+              </label>
+            </div>
           </div>
-        </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700">
+              Message *
+              <textarea
+                name="message"
+                rows={5}
+                value={form.message}
+                onChange={handleChange}
+                className="mt-1 block w-full rounded-md border border-gray-200 px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                placeholder="Tell us about your ideal retirement lifestyle, timeframe and any questions you have."
+                required
+              />
+            </label>
+          </div>
+
+          <div className="pt-2">
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="inline-flex items-center justify-center rounded-full bg-emerald-600 px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isSubmitting ? "Sending..." : "Submit & Book a Call"}
+            </button>
+          </div>
+        </form>
       </div>
     </section>
   );

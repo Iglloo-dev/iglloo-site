@@ -2,9 +2,73 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import nodemailer from "nodemailer";
 import axios from "axios";
-import { supabaseAdmin } from "../../lib/supabaseAdmin";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
-const AI_ENABLED = process.env.AI_INSIGHTS_ENABLED === "true";
+// If you later re-enable AI, you can wire this back:
+// import OpenAI from "openai";
+// const openai =
+//   process.env.AI_INSIGHTS_ENABLED === "true" && process.env.OPENAI_API_KEY
+//     ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+//     : null;
+
+/**
+ * Extract client IP from Vercel / Node request.
+ */
+function extractClientIp(req: NextApiRequest): string | null {
+  const xff = req.headers["x-forwarded-for"];
+
+  const raw =
+    (Array.isArray(xff) ? xff[0] : xff?.split(",")[0]) ??
+    req.socket.remoteAddress ??
+    null;
+
+  if (!raw) return null;
+
+  // Handle IPv6-mapped IPv4 like ::ffff:1.2.3.4
+  return raw.replace("::ffff:", "").trim();
+}
+
+/**
+ * Very small private-IP check.
+ */
+function isPrivateIp(ip: string): boolean {
+  if (ip === "127.0.0.1" || ip === "::1") return true;
+  if (ip.startsWith("10.")) return true;
+  if (ip.startsWith("192.168.")) return true;
+
+  // 172.16.0.0 – 172.31.255.255
+  const match172 = /^172\.(1[6-9]|2\d|3[0-1])\./.test(ip);
+  if (match172) return true;
+
+  return false;
+}
+
+/**
+ * Lookup country name from IP using a public Geo-IP API.
+ * You can swap provider later if you want.
+ */
+async function lookupCountryFromIp(ip: string): Promise<string | null> {
+  try {
+    // Simple public endpoint (no API key for small usage).
+    // If you ever hit limits, switch to a paid key-based service.
+    const res = await fetch(`https://ipapi.co/${ip}/json/`, {
+      // Don’t let this slow the whole request forever
+      cache: "no-store",
+    });
+
+    if (!res.ok) return null;
+
+    const data = (await res.json()) as {
+      country_name?: string;
+      country?: string;
+    };
+
+    return data.country_name || data.country || null;
+  } catch (err) {
+    console.error("GeoIP lookup failed:", err);
+    return null;
+  }
+}
 
 export default async function handler(
   req: NextApiRequest,
@@ -16,26 +80,15 @@ export default async function handler(
 
   const { name, email, phone, country, message } = req.body || {};
 
-  if (!name || !email || !country || !message) {
+  if (!name || !email || !message) {
     return res
       .status(400)
       .json({ ok: false, error: "Missing required fields" });
   }
 
-  // ---------------------------------
-  // 0. Derive visitor IP (best-effort)
-  // ---------------------------------
-  const rawIp =
-    (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim() ||
-    req.socket.remoteAddress ||
-    null;
-
-  // TODO (optional): later we can call an IP lookup API and fill visitorCountry
-  const visitorCountry: string | null = null;
-
-  // ---------------------------------
-  // 1. Send to Mailtrap Sandbox
-  // ---------------------------------
+  // -----------------------------
+  // 1️⃣ SEND TO MAILTRAP SANDBOX
+  // -----------------------------
   const transporter = nodemailer.createTransport({
     host: process.env.MAILTRAP_HOST,
     port: Number(process.env.MAILTRAP_PORT),
@@ -54,7 +107,7 @@ export default async function handler(
       <p><strong>Name:</strong> ${name}</p>
       <p><strong>Email:</strong> ${email}</p>
       <p><strong>Phone:</strong> ${phone || "N/A"}</p>
-      <p><strong>Country considering:</strong> ${country}</p>
+      <p><strong>Country considering:</strong> ${country || "N/A"}</p>
       <p><strong>Message:</strong><br>${message}</p>
     `,
   };
@@ -64,12 +117,11 @@ export default async function handler(
     console.log("Sandbox email delivered");
   } catch (err) {
     console.error("Sandbox email error:", err);
-    // we still continue so we can try to log the lead
   }
 
-  // ---------------------------------
-  // 2. Forward to Gmail via Mailtrap API
-  // ---------------------------------
+  // ---------------------------------------------
+  // 2️⃣ ALSO FORWARD TO GMAIL VIA MAILTRAP API
+  // ---------------------------------------------
   try {
     await axios.post(
       "https://send.api.mailtrap.io/api/send",
@@ -89,7 +141,7 @@ export default async function handler(
           <p><strong>Name:</strong> ${name}</p>
           <p><strong>Email:</strong> ${email}</p>
           <p><strong>Phone:</strong> ${phone || "N/A"}</p>
-          <p><strong>Country considering:</strong> ${country}</p>
+          <p><strong>Country considering:</strong> ${country || "N/A"}</p>
           <p><strong>Message:</strong><br>${message}</p>
         `,
       },
@@ -105,79 +157,36 @@ export default async function handler(
   } catch (err: any) {
     console.error(
       "Mailtrap API Gmail forward error:",
-      err.response?.data || err
+      err?.response?.data || err
     );
   }
 
-  // ---------------------------------
-  // 3. (Optional) AI insight / scoring
-  // ---------------------------------
+  // ---------------------------------------------
+  // 3️⃣ GEO-IP LOOKUP → visitor_country
+  // ---------------------------------------------
+  const clientIp = extractClientIp(req);
+  let visitorCountry: string | null = null;
+
+  if (clientIp && !isPrivateIp(clientIp)) {
+    visitorCountry = await lookupCountryFromIp(clientIp);
+  }
+
+  // ---------------------------------------------
+  // 4️⃣ (OPTIONAL) AI INSIGHTS – currently disabled
+  // ---------------------------------------------
   let aiInsight: string | null = null;
   let spamScore: number | null = null;
   let leadScore: number | null = null;
   let leadSegment: string | null = null;
 
-  if (AI_ENABLED && process.env.OPENAI_API_KEY) {
-    try {
-      // ⚠️ This will currently hit your quota error, so leave AI_ENABLED=false
-      const prompt = `
-You are a lead intelligence assistant for a retirement relocation service.
+  // If you later enable AI, you can plug that logic here and fill
+  // aiInsight, spamScore, leadScore, leadSegment.
 
-Lead details:
-- Name: ${name}
-- Email: ${email}
-- Phone: ${phone || "N/A"}
-- Country considering: ${country}
-- Message: ${message}
-
-1) Summarize this lead in 1–2 sentences.
-2) Give a spam score between 0 and 1 (0 = not spam, 1 = obvious spam).
-3) Give a lead quality score from 0 to 100.
-4) Classify as "Hot", "Warm", or "Cold".
-
-Return a JSON object with keys:
-"summary", "spam_score", "lead_score", "segment".
-`;
-
-      const aiRes = await fetch("https://api.openai.com/v1/responses", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "gpt-4.1-mini",
-          input: prompt,
-          response_format: { type: "json_object" },
-        }),
-      });
-
-      if (!aiRes.ok) {
-        const text = await aiRes.text();
-        throw new Error(`OpenAI error: ${aiRes.status} ${text}`);
-      }
-
-      const json = await aiRes.json();
-      const parsed = JSON.parse(json.output[0].content[0].text);
-
-      aiInsight = parsed.summary ?? null;
-      spamScore =
-        typeof parsed.spam_score === "number" ? parsed.spam_score : null;
-      leadScore =
-        typeof parsed.lead_score === "number" ? parsed.lead_score : null;
-      leadSegment = typeof parsed.segment === "string" ? parsed.segment : null;
-    } catch (err) {
-      console.error("AI lead insight error:", err);
-      // we just skip AI fields if it fails
-    }
-  }
-
-  // ---------------------------------
-  // 4. Insert lead into Supabase
-  // ---------------------------------
+  // ---------------------------------------------
+  // 5️⃣ STORE LEAD IN SUPABASE
+  // ---------------------------------------------
   try {
     const { error } = await supabaseAdmin.from("leads").insert({
-      created_at: new Date().toISOString(),
       name,
       email,
       phone,
@@ -185,8 +194,7 @@ Return a JSON object with keys:
       message,
       ai_insight: aiInsight,
       visitor_country: visitorCountry,
-      ip_address: rawIp,
-      // comment these out if you didn't create the columns
+      ip_address: clientIp,
       spam_score: spamScore,
       lead_score: leadScore,
       lead_segment: leadSegment,
@@ -195,10 +203,10 @@ Return a JSON object with keys:
     if (error) {
       console.error("Supabase insert error:", error);
     } else {
-      console.log("Lead saved to Supabase");
+      console.log("Lead stored in Supabase");
     }
   } catch (err) {
-    console.error("Unexpected Supabase error:", err);
+    console.error("Supabase insert exception:", err);
   }
 
   return res.status(200).json({ ok: true });
